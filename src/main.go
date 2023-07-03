@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"main/src/Producer"
+	"main/src/RouteFinder"
 
 	"github.com/Shopify/sarama"
 	"gopkg.in/ini.v1"
@@ -10,9 +13,15 @@ import (
 
 var msg *sarama.ConsumerMessage
 
+type RouteRequest struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
 func ConsumeMessages(server string, partition int32, topic string) {
 	// Load consumer properties from file
-	filePath := "<Path to consumer.properties>"
+	filePath := "C:\\kafka\\config\\consumer.properties"
 	cfg, err := ini.Load(filePath)
 	if err != nil {
 		log.Fatalf("Failed to load consumer properties file: %v", err)
@@ -55,9 +64,54 @@ func ConsumeMessages(server string, partition int32, topic string) {
 	for {
 		select {
 		case msg = <-partitionConsumer.Messages():
+
 			// Process the received message
 			fmt.Printf("Received message: Topic=%s, Partition=%d, Offset=%d, Key=%s, Value=%s\n",
 				msg.Topic, msg.Partition, msg.Offset, string(msg.Key), string(msg.Value))
+
+			var routeResponse RouteFinder.RouteResponse = RouteFinder.RouteResponse{}
+
+			// Parsing URL
+			routeRequestObject_0 := RouteRequest{}
+			err_0 := json.Unmarshal([]byte(string(msg.Value)), &routeRequestObject_0)
+			if err_0 != nil {
+				fmt.Printf("Failed to marshal msg.Value struct to JSON: %v\n", err)
+				return
+			}
+
+			url := routeRequestObject_0.Message
+
+			// Get Route from point A to point B
+			routeResponse = routeResponse.GetRouteFromAtoB(url)
+
+			// Convert struct to string using JSON marshaling
+			routeResponseJSON, err_1 := json.Marshal(routeResponse)
+			if err_1 != nil {
+				fmt.Printf("Failed to marshal struct to JSON: %v\n", err)
+				return
+			}
+
+			routeResponseString := string(routeResponseJSON)
+
+			// Create a new instance of the RouteRequest struct
+			routeRequest_1 := RouteRequest{}
+
+			// Kafka Consumer Configuration File
+			var _consumerPropertiesFile = "C:\\kafka\\config\\consumer.properties"
+
+			// Unmarshal the JSON string into the struct
+			err_2 := json.Unmarshal([]byte(string(msg.Value)), &routeRequest_1)
+
+			routeRequest_1.Message = routeResponseString
+
+			if err_2 != nil {
+				fmt.Printf("Failed to parse JSON: %v", err)
+				return
+			}
+
+			Producer.ProduceMessage(routeRequest_1.ID, "localhost:9092", "ecro_res_topic", routeRequest_1.Type, routeRequest_1.Message,
+				_consumerPropertiesFile)
+
 		case err := <-partitionConsumer.Errors():
 			// Handle consumer errors
 			log.Printf("Error while consuming message: %v\n", err)
@@ -68,5 +122,6 @@ func ConsumeMessages(server string, partition int32, topic string) {
 func main() {
 
 	fmt.Println("Welcome to ECRO Kafka Consumer")
+	ConsumeMessages("localhost:9092", 0, "ecro_req_topic")
 
 }
